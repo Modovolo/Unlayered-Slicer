@@ -142,7 +142,22 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/osx/Info.plist.in 
 if (WIN32)
     add_library(UnlayeredSlicer SHARED UnlayeredSlicer.cpp UnlayeredSlicer.hpp)
 else ()
-    add_executable(UnlayeredSlicer UnlayeredSlicer.cpp UnlayeredSlicer.hpp)
+    if(FLEET_HEADLESS)
+        add_executable(UnlayeredSlicer fleet_slicer.cpp)
+        add_subdirectory(${CMAKE_SOURCE_DIR}/tests/catch2 ${CMAKE_BINARY_DIR}/fleet-catch2)
+        add_executable(FleetSlicerTests
+            ${CMAKE_SOURCE_DIR}/tests/fff_print/fff_print_tests.cpp
+            ${CMAKE_SOURCE_DIR}/tests/fff_print/test_helpers.cpp
+            ${CMAKE_SOURCE_DIR}/tests/fff_print/test_nonplanar_top.cpp
+            ${CMAKE_SOURCE_DIR}/tests/fff_print/test_cut_plane_apply.cpp)
+        target_include_directories(FleetSlicerTests PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+        target_compile_definitions(FleetSlicerTests PRIVATE
+            TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data"
+            PROFILES_DIR="${CMAKE_SOURCE_DIR}/resources/profiles")
+        target_link_libraries(FleetSlicerTests PRIVATE libslic3r Catch2::Catch2WithMain)
+    else()
+        add_executable(UnlayeredSlicer UnlayeredSlicer.cpp UnlayeredSlicer.hpp)
+    endif()
 endif ()
 
 if (MINGW)

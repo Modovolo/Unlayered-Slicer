@@ -1,0 +1,83 @@
+name: Fleet headless slicer
+on:
+  workflow_dispatch:
+  push:
+    branches: [fleet-slicer]
+permissions:
+  contents: read
+  packages: write
+jobs:
+  image:
+    if: github.repository_owner == 'Modovolo'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify project adapter and private worker lifecycle
+        run: |
+          python -m pip install aiohttp pytest pytest-asyncio
+          python -m pytest slicer_service -q
+      - uses: docker/setup-buildx-action@v3
+        id: buildx
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve immutable input keys
+        id: keys
+        env:
+          DEPS_KEY: ${{ hashFiles('deps/**', 'cmake/**', 'Dockerfile.slicer') }}
+          ENGINE_KEY: ${{ hashFiles('src/**', 'deps_src/**', 'resources/**', 'localization/**', 'CMakeLists.txt', 'version.inc', 'scripts/**', 'tests/**', 'tools/**') }}
+        run: |
+          echo "deps=ghcr.io/modovolo/unlayered-slicer:deps-$DEPS_KEY" >> "$GITHUB_OUTPUT"
+          echo "engine=ghcr.io/modovolo/unlayered-slicer:engine-$DEPS_KEY-$ENGINE_KEY" >> "$GITHUB_OUTPUT"
+      - name: Restore compiler cache
+        uses: actions/cache@v4
+        with:
+          path: compiler-cache
+          key: unlayered-compiler-amd64-clang-${{ github.run_id }}
+          restore-keys: unlayered-compiler-amd64-clang-
+      - uses: reproducible-containers/buildkit-cache-dance@v3
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-map: '{"compiler-cache": "/compiler-cache"}'
+      - name: Publish dependencies independently
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.slicer
+          target: deps
+          build-args: DEPS_CACHE_KEY=${{ hashFiles('deps/**', 'cmake/**', 'Dockerfile.slicer') }}
+          push: true
+          tags: ${{ steps.keys.outputs.deps }}
+          cache-from: type=registry,ref=ghcr.io/modovolo/unlayered-slicer:deps-cache
+          cache-to: type=registry,ref=ghcr.io/modovolo/unlayered-slicer:deps-cache,mode=max
+      - name: Publish compiled engine independently
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.slicer
+          target: engine
+          push: true
+          tags: ${{ steps.keys.outputs.engine }}
+          build-args: DEPS_IMAGE=${{ steps.keys.outputs.deps }}
+          cache-from: type=registry,ref=ghcr.io/modovolo/unlayered-slicer:engine-cache
+          cache-to: type=registry,ref=ghcr.io/modovolo/unlayered-slicer:engine-cache,mode=max
+      - name: Acceptance tests and service image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.slicer
+          target: runtime
+          push: true
+          tags: ghcr.io/modovolo/unlayered-slicer:${{ github.sha }}
+          build-args: |
+            DEPS_IMAGE=${{ steps.keys.outputs.deps }}
+            ENGINE_IMAGE=${{ steps.keys.outputs.engine }}
+            SOURCE_REVISION=${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/modovolo/unlayered-slicer:service-cache
+          cache-to: type=registry,ref=ghcr.io/modovolo/unlayered-slicer:service-cache,mode=max

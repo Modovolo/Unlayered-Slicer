@@ -57,6 +57,9 @@ include(ExternalProject)
 include(ProcessorCount)
 
 ProcessorCount(NPROC)
+if(FLEET_HEADLESS AND DEFINED ENV{CMAKE_BUILD_PARALLEL_LEVEL})
+    set(NPROC "$ENV{CMAKE_BUILD_PARALLEL_LEVEL}")
+endif()
 if (NPROC EQUAL 0)
     set(NPROC 1)
 endif ()
@@ -495,6 +498,10 @@ else()
     #list(APPEND _dep_list "dep_libigl")
 endif()
 
+option(FLEET_HEADLESS "Omit desktop-only dependency build targets" OFF)
+if(FLEET_HEADLESS)
+    list(REMOVE_ITEM _dep_list dep_wxWidgets dep_wxInspector dep_GLFW dep_FFMPEG dep_DataChannel)
+endif()
 add_custom_target(deps ALL DEPENDS ${_dep_list})
 
 # Note: I'm not using any of the LOG_xxx options in ExternalProject_Add() commands

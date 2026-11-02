@@ -28,3 +28,7 @@ scripts/Dockerfile
 scripts/DockerBuild.sh
 scripts/DockerRun.sh
 scripts/.dockerignore
+
+.git
+__pycache__
+*.pyc
