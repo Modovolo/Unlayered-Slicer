@@ -54,7 +54,13 @@ def main(output):
                 config = settings({**base, "nonplanar_layers": feature == "curved_tops"}, profile, project, ["curved_tops", "multiplanar"])
                 path = root / (feature+".json"); gcode = root / (feature+".gcode")
                 path.write_text(json.dumps({"settings": config, "objects": [{"path": str(mesh), "cutPlanes": planes}]}))
-                result = subprocess.run([os.environ.get("UNLAYERED_BIN", "/opt/unlayered/bin/unlayered-slicer"), str(path), str(gcode)], capture_output=True, text=True, timeout=300)
+                try:
+                    result = subprocess.run([os.environ.get("UNLAYERED_BIN", "/opt/unlayered/bin/unlayered-slicer"), str(path), str(gcode)], capture_output=True, text=True, timeout=300)
+                except subprocess.TimeoutExpired as timeout:
+                    # POSIX TimeoutExpired carries undecoded bytes even with text=True.
+                    text = lambda data: data.decode(errors="replace") if isinstance(data, bytes) else (data or "")
+                    output = text(timeout.stderr) + text(timeout.stdout)
+                    raise RuntimeError("Timed out after 300 s; last output:\n" + output[-2000:]) from None
                 if result.returncode: raise RuntimeError((result.stderr + result.stdout)[-2000:])
                 count, curved = moves(gcode.read_text())
                 if count < 20: raise RuntimeError("Insufficient extrusion paths")
