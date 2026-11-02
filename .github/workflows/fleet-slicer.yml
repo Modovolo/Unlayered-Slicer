@@ -2,7 +2,7 @@ name: Fleet headless slicer
 on:
   workflow_dispatch:
   push:
-    branches: [fleet-slicer]
+    branches: [fleet-slicer, main]
 permissions:
   contents: read
   packages: write
