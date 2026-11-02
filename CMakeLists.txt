@@ -928,7 +928,10 @@ if(APPLE AND CMAKE_VERSION VERSION_GREATER_EQUAL "4.0")
     set(OPENGL_LIBRARIES "-framework OpenGL" CACHE STRING "OpenGL framework" FORCE)
 endif()
 
-find_package(glfw3 REQUIRED)
+# Only libslic3r_gui links glfw; headless dependency builds omit dep_GLFW.
+if (SLIC3R_GUI)
+    find_package(glfw3 REQUIRED)
+endif()
 
 # Find the Cereal serialization library
 find_package(cereal REQUIRED)
