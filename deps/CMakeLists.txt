@@ -65,6 +65,9 @@ if (NPROC EQUAL 0)
 endif ()
 
 set(DEP_DOWNLOAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/DL_CACHE CACHE PATH "Path for downloaded source packages.")
+# A stalled mirror would otherwise hang the build silently until CI times out.
+# ExternalProject retries a download that times out.
+set(DEP_DOWNLOAD_TIMEOUT_ARGS TIMEOUT 1800 INACTIVITY_TIMEOUT 120)
 set(FLATPAK FALSE CACHE BOOL "Toggles various build settings for flatpak, like /usr/local in DESTDIR or not building wxwidgets")
 option(SLIC3R_CAD "Build the SolveSpace solver and OCCT ModelingAlgorithms module the parametric Design/CAD tab needs. Must match the main project's SLIC3R_CAD." ON)
 
@@ -213,6 +216,13 @@ function(orcaslicer_add_cmake_project projectname)
       set(_build_j "-j${NPROC}")
     endif ()
 
+    # Ninja otherwise buffers an entire dependency build before forwarding its
+    # output. Fleet samples that output periodically instead of flooding CI.
+    set(_fleet_terminal_args "")
+    if(FLEET_HEADLESS)
+        set(_fleet_terminal_args USES_TERMINAL_DOWNLOAD TRUE USES_TERMINAL_BUILD TRUE USES_TERMINAL_INSTALL TRUE)
+    endif()
+
     set(_source_dir_arg "")
     if (P_ARGS_SOURCE_DIR)
         set(_source_dir_arg SOURCE_DIR ${P_ARGS_SOURCE_DIR})
@@ -222,9 +232,11 @@ if (NOT IS_CROSS_COMPILE OR NOT APPLE)
     ExternalProject_Add(
         dep_${projectname}
         EXCLUDE_FROM_ALL    ON
+        ${_fleet_terminal_args}
         INSTALL_DIR         ${DESTDIR}
         DOWNLOAD_DIR        ${DEP_DOWNLOAD_DIR}/${projectname}
         ${_source_dir_arg}
+        ${DEP_DOWNLOAD_TIMEOUT_ARGS}
         ${_gen}
         CMAKE_ARGS
             -DCMAKE_POLICY_VERSION_MINIMUM=3.10
@@ -280,6 +292,7 @@ else()
         INSTALL_DIR         ${DESTDIR}
         DOWNLOAD_DIR        ${DEP_DOWNLOAD_DIR}/${projectname}
         ${_source_dir_arg}
+        ${DEP_DOWNLOAD_TIMEOUT_ARGS}
         ${_gen}
         CMAKE_ARGS
             -DCMAKE_POLICY_VERSION_MINIMUM=3.10
@@ -448,6 +461,7 @@ execute_process(
     RESULT_VARIABLE REV_PARSE_RESULT
     OUTPUT_VARIABLE REV_PARSE_OUTPUT
     OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
 )
 
 # Will output "true" and have a 0 return code if within a git repo

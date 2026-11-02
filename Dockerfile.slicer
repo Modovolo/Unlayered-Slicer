@@ -19,11 +19,15 @@ ARG DEPS_CACHE_KEY=v019-headless-clang-amd64
 # A source or wrapper change must not invalidate this layer.
 COPY deps/ deps/
 COPY cmake/ cmake/
+COPY scripts/fleet_build_progress.py /usr/local/bin/fleet-build-progress
 RUN --mount=type=cache,target=/compiler-cache --mount=type=cache,target=/src/deps/build,id=unlayered-${DEPS_CACHE_KEY} \
-    cmake -S deps -B deps/build -G Ninja -DSLIC3R_CAD=OFF -DFLEET_HEADLESS=ON \
+    --mount=type=cache,target=/src/deps/DL_CACHE,id=unlayered-downloads \
+    CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS} cmake -S deps -B deps/build -G Ninja -DSLIC3R_CAD=OFF -DFLEET_HEADLESS=ON \
       -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
       -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-    && (CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS} cmake --build deps/build -j1 > /src/deps/build/fleet-build.log 2>&1 || (tail -n 100 /src/deps/build/fleet-build.log; exit 1)) \
+    && CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS} python3 /usr/local/bin/fleet-build-progress \
+      --label dependencies --log /src/deps/build/fleet-build.log --objects /src/deps/build \
+      -- cmake --build deps/build -j1 \
     && cp -a deps/build/OrcaSlicer_dep /opt/unlayered-deps
 
 FROM ${DEPS_IMAGE} AS engine
@@ -37,13 +41,16 @@ COPY localization/ localization/
 COPY scripts/ scripts/
 COPY tests/ tests/
 COPY tools/ tools/
+COPY scripts/fleet_build_progress.py /usr/local/bin/fleet-build-progress
 RUN --mount=type=cache,target=/compiler-cache \
     cmake -S . -B build -G Ninja -DFLEET_HEADLESS=ON -DSLIC3R_GUI=OFF -DSLIC3R_CAD=OFF \
       -DORCA_BUILD_PYTHON_STUBGEN_MODULE=OFF -DSLIC3R_PCH=OFF -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_PREFIX_PATH=/src/deps/build/OrcaSlicer_dep/usr/local \
       -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
       -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-    && (cmake --build build --target UnlayeredSlicer FleetSlicerTests -j${BUILD_JOBS} > build/fleet-engine.log 2>&1 || (tail -n 150 build/fleet-engine.log; exit 1)) \
+    && python3 /usr/local/bin/fleet-build-progress \
+      --label engine --log build/fleet-engine.log --objects build \
+      -- cmake --build build --target UnlayeredSlicer FleetSlicerTests -j${BUILD_JOBS} \
     && LD_LIBRARY_PATH=/src/deps/build/OrcaSlicer_dep/usr/local/libpython/lib ./build/src/FleetSlicerTests \
     && mkdir -p /opt/unlayered/bin /opt/unlayered/lib \
     && cp build/src/unlayered-slicer /opt/unlayered/bin/ \

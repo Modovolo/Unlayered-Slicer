@@ -37,6 +37,25 @@ and service images separately. Keep build jobs bounded; the default is two.
 Use a dependency-cache key that changes with compiler/architecture/dependency
 inputs, as the workflow does. The runtime image omits the compiler and GUI.
 
+Dependency and engine compilation print a progress sample every 30 seconds:
+elapsed time, compiled object count and recent compiler output. Complete logs
+remain at `/src/deps/build/fleet-build.log` and `/src/build/fleet-engine.log`
+inside their respective build stages. A long first build can still be expensive;
+silence after CMake configuration in older images was caused by redirected logs,
+not evidence that compilation had stopped. Headless dependency builds now forward
+their nested Ninja output, and the expected source-archive Git probe stays quiet.
+Source-archive downloads time out after two minutes without data (30 minutes in
+total) and are retried, so a stalled mirror fails visibly instead of hanging the
+step. Downloaded archives are kept in a BuildKit cache mount, which a reused
+builder keeps; a fresh GitHub runner starts without it.
+
+CI restores the compiler cache explicitly, then extracts and saves it with
+`always()` cleanup steps after failure or cancellation when the runner survives.
+A forcibly terminated runner may still lose unsaved work. This retains compiler
+outputs; a failed cold build still needs dependency configuration and installation
+on the next fresh runner. Published dependency images avoid that work after the
+first successful dependency build. No advanced engine acceptance gate is skipped.
+
 The `fleet-slicer.yml` workflow is restricted to the Modovolo organization and
 publishes immutable SHA tags at `ghcr.io/modovolo/unlayered-slicer`. It requires an
 owned fork and package-write access. It does not deploy or print anything.
