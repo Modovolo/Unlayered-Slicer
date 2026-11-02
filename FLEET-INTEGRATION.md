@@ -2,6 +2,8 @@
 
 Based on upstream v0.1.9 (`89e3033bf81cd892a8f2af819634aa2aa235e1cc`).
 `origin` remains upstream; local integration work is on `fleet-slicer`.
+Keep `main` aligned with upstream and merge reviewed upstream updates into
+`fleet-slicer`. Fleet image CI runs on the integration branch, not upstream main.
 
 The desktop CLI depends on GUI classes. `FLEET_HEADLESS=ON`, with `SLIC3R_GUI=OFF`
 and `SLIC3R_CAD=OFF`, selects `src/fleet_slicer.cpp`: a small entry point over the
