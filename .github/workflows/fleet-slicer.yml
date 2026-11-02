@@ -5,7 +5,8 @@ on:
     branches: [fleet-slicer]
 permissions:
   contents: read
-  packages: write
+env:
+  IMAGE: docker.io/jmarji/unlayered-slicer
 jobs:
   image:
     if: github.repository_owner == 'Modovolo'
@@ -26,17 +27,17 @@ jobs:
         id: buildx
       - uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: jmarji
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Resolve immutable input keys
         id: keys
         env:
           DEPS_KEY: ${{ hashFiles('deps/**', 'cmake/**', 'Dockerfile.slicer', 'scripts/fleet_build_progress.py') }}
           ENGINE_KEY: ${{ hashFiles('src/**', 'deps_src/**', 'resources/**', 'localization/**', 'CMakeLists.txt', 'version.inc', 'scripts/**', 'tests/**', 'tools/**') }}
+        # Docker tags are limited to 128 characters; two full SHA-256 keys exceed it.
         run: |
-          echo "deps=ghcr.io/modovolo/unlayered-slicer:deps-$DEPS_KEY" >> "$GITHUB_OUTPUT"
-          echo "engine=ghcr.io/modovolo/unlayered-slicer:engine-$DEPS_KEY-$ENGINE_KEY" >> "$GITHUB_OUTPUT"
+          echo "deps=$IMAGE:deps-${DEPS_KEY:0:24}" >> "$GITHUB_OUTPUT"
+          echo "engine=$IMAGE:engine-${DEPS_KEY:0:24}-${ENGINE_KEY:0:24}" >> "$GITHUB_OUTPUT"
       - name: Restore compiler cache
         id: compiler_cache
         uses: actions/cache/restore@v4
@@ -61,8 +62,8 @@ jobs:
             BUILD_JOBS=4
           push: true
           tags: ${{ steps.keys.outputs.deps }}
-          cache-from: type=registry,ref=ghcr.io/modovolo/unlayered-slicer:deps-cache
-          cache-to: type=registry,ref=ghcr.io/modovolo/unlayered-slicer:deps-cache,mode=max
+          cache-from: type=registry,ref=${{ env.IMAGE }}:deps-cache
+          cache-to: type=registry,ref=${{ env.IMAGE }}:deps-cache,mode=max
       - name: Publish compiled engine independently
         uses: docker/build-push-action@v6
         with:
@@ -74,8 +75,8 @@ jobs:
           build-args: |
             DEPS_IMAGE=${{ steps.keys.outputs.deps }}
             BUILD_JOBS=4
-          cache-from: type=registry,ref=ghcr.io/modovolo/unlayered-slicer:engine-cache
-          cache-to: type=registry,ref=ghcr.io/modovolo/unlayered-slicer:engine-cache,mode=max
+          cache-from: type=registry,ref=${{ env.IMAGE }}:engine-cache
+          cache-to: type=registry,ref=${{ env.IMAGE }}:engine-cache,mode=max
       - name: Acceptance tests and service image
         uses: docker/build-push-action@v6
         with:
@@ -83,13 +84,13 @@ jobs:
           file: Dockerfile.slicer
           target: runtime
           push: true
-          tags: ghcr.io/modovolo/unlayered-slicer:${{ github.sha }}
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
           build-args: |
             DEPS_IMAGE=${{ steps.keys.outputs.deps }}
             ENGINE_IMAGE=${{ steps.keys.outputs.engine }}
             SOURCE_REVISION=${{ github.sha }}
-          cache-from: type=registry,ref=ghcr.io/modovolo/unlayered-slicer:service-cache
-          cache-to: type=registry,ref=ghcr.io/modovolo/unlayered-slicer:service-cache,mode=max
+          cache-from: type=registry,ref=${{ env.IMAGE }}:service-cache
+          cache-to: type=registry,ref=${{ env.IMAGE }}:service-cache,mode=max
       # Explicit extraction and save also run after failed or canceled builds.
       # The combined cache action only saves in its success-only post step.
       - name: Extract compiler cache even after build failure

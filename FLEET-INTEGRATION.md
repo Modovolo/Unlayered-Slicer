@@ -57,8 +57,11 @@ on the next fresh runner. Published dependency images avoid that work after the
 first successful dependency build. No advanced engine acceptance gate is skipped.
 
 The `fleet-slicer.yml` workflow is restricted to the Modovolo organization and
-publishes immutable SHA tags at `ghcr.io/modovolo/unlayered-slicer`. It requires an
-owned fork and package-write access. It does not deploy or print anything.
+publishes immutable SHA tags at `jmarji/unlayered-slicer` on Docker Hub. It
+requires an owned fork and a `DOCKERHUB_TOKEN` secret with write access to
+`jmarji`. Dependency and engine tags use 24-character prefixes of their input
+hashes to stay within Docker's 128-character tag limit. It does not deploy or
+print anything.
 
 ## Private worker contract
 
