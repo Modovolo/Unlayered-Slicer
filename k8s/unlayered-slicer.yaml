@@ -1,0 +1,85 @@
+---
+# Private Unlayered slicing worker. Fleet Manager reaches it at
+# http://unlayered-slicer:8090 with the shared fleet-slicer-secrets token;
+# it is never exposed through the ingress.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unlayered-slicer
+  namespace: fleet
+  labels:
+    app: unlayered-slicer
+spec:
+  replicas: 1
+  # One worker owns its job files in an emptyDir; never run two side by side.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: unlayered-slicer
+  template:
+    metadata:
+      labels:
+        app: unlayered-slicer
+    spec:
+      imagePullSecrets:
+        - name: dockerhub-creds
+      containers:
+        - name: unlayered-slicer
+          # The deploy job sets the immutable commit tag.
+          image: jmarji/unlayered-slicer:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8090
+              name: http
+          env:
+            - name: SLICER_WORKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: fleet-slicer-secrets
+                  key: worker-token
+            # Nodes have two vCPUs; match the TBB arena to the CPU limit.
+            - name: SLICER_THREADS
+              value: "2"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 3Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8090
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 6
+          volumeMounts:
+            - name: work
+              mountPath: /work
+      volumes:
+        - name: work
+          emptyDir:
+            sizeLimit: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: unlayered-slicer
+  namespace: fleet
+  labels:
+    app: unlayered-slicer
+spec:
+  selector:
+    app: unlayered-slicer
+  ports:
+    - port: 8090
+      targetPort: 8090
+      name: http

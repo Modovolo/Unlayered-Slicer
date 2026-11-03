@@ -60,8 +60,15 @@ The `fleet-slicer.yml` workflow is restricted to the Modovolo organization and
 publishes immutable SHA tags at `jmarji/unlayered-slicer` on Docker Hub. It
 requires an owned fork and a `DOCKERHUB_TOKEN` secret with write access to
 `jmarji`. Dependency and engine tags use 24-character prefixes of their input
-hashes to stay within Docker's 128-character tag limit. It does not deploy or
-print anything.
+hashes to stay within Docker's 128-character tag limit.
+
+After the acceptance-tested image is published, the `deploy` job rolls it out to
+the `fleet` namespace from `k8s/unlayered-slicer.yaml` (pushes to `fleet-slicer`;
+manual runs only with `run_deploy`). It needs an `LKE_KUBECONFIG` secret. On first
+deploy it creates `fleet-slicer-secrets` with a random worker token inside the
+cluster and restarts Fleet Manager so both sides share it. It also routes
+`/api/slicer` to Fleet Manager, then checks that Fleet Manager reaches the worker.
+It never prints anything.
 
 ## Private worker contract
 

@@ -1,6 +1,12 @@
 name: Fleet headless slicer
 on:
   workflow_dispatch:
+    inputs:
+      run_deploy:
+        description: Deploy the accepted worker image after publishing
+        required: false
+        default: false
+        type: boolean
   push:
     branches: [fleet-slicer]
 permissions:
@@ -14,6 +20,8 @@ jobs:
     # A cold dependency build (Boost, OCCT, OpenCV, ...) exceeds three hours.
     # 360 minutes is the GitHub-hosted maximum; warm compiler caches finish far sooner.
     timeout-minutes: 360
+    outputs:
+      image_ref: ${{ env.IMAGE }}:${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -122,3 +130,86 @@ jobs:
         with:
           path: compiler-cache
           key: unlayered-compiler-amd64-clang-${{ github.run_id }}-${{ github.run_attempt }}
+
+  deploy:
+    name: Deploy accepted worker
+    needs: image
+    if: github.event_name == 'push' || github.event.inputs.run_deploy == 'true'
+    runs-on: ubuntu-latest
+    env:
+      NAMESPACE: fleet
+      DEPLOYMENT_NAME: unlayered-slicer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-kubectl@v4
+      - name: Configure kubeconfig
+        env:
+          LKE_KUBECONFIG: ${{ secrets.LKE_KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$LKE_KUBECONFIG" ]]; then
+            echo "Missing required secret: LKE_KUBECONFIG"
+            exit 1
+          fi
+          mkdir -p "$HOME/.kube"
+          if printf '%s' "$LKE_KUBECONFIG" | grep -q 'apiVersion:'; then
+            printf '%s\n' "$LKE_KUBECONFIG" > "$HOME/.kube/config"
+          elif ! printf '%s' "$LKE_KUBECONFIG" | base64 --decode > "$HOME/.kube/config" 2>/dev/null; then
+            echo "LKE_KUBECONFIG is neither raw kubeconfig nor valid base64"
+            exit 1
+          fi
+          chmod 600 "$HOME/.kube/config"
+      # Fleet Manager and the worker share this token. It is generated in the
+      # cluster once and never leaves it; an existing token is kept.
+      - name: Ensure shared worker token
+        id: token
+        run: |
+          set -euo pipefail
+          if kubectl -n "$NAMESPACE" get secret fleet-slicer-secrets >/dev/null 2>&1; then
+            echo "created=false" >> "$GITHUB_OUTPUT"
+          else
+            kubectl -n "$NAMESPACE" create secret generic fleet-slicer-secrets \
+              --from-literal=worker-token="$(openssl rand -hex 32)"
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Roll out worker
+        run: |
+          set -euo pipefail
+          kubectl apply -f k8s/unlayered-slicer.yaml
+          kubectl -n "$NAMESPACE" set image "deployment/$DEPLOYMENT_NAME" "$DEPLOYMENT_NAME=${{ needs.image.outputs.image_ref }}"
+          if ! kubectl -n "$NAMESPACE" rollout status "deployment/$DEPLOYMENT_NAME" --timeout=600s; then
+            echo "::group::Pods"
+            kubectl -n "$NAMESPACE" describe pods -l app=unlayered-slicer || true
+            echo "::endgroup::"
+            echo "::group::Logs"
+            kubectl -n "$NAMESPACE" logs "deployment/$DEPLOYMENT_NAME" --tail=200 || true
+            echo "::endgroup::"
+            echo "::group::Recent events"
+            kubectl -n "$NAMESPACE" get events --sort-by=.metadata.creationTimestamp | tail -n 50 || true
+            echo "::endgroup::"
+            exit 1
+          fi
+      # Fleet Manager reads the optional token only at pod start.
+      - name: Restart Fleet Manager for a new token
+        if: steps.token.outputs.created == 'true'
+        run: |
+          set -euo pipefail
+          kubectl -n "$NAMESPACE" rollout restart deployment/fleet-manager
+          kubectl -n "$NAMESPACE" rollout status deployment/fleet-manager --timeout=600s
+      # The browser reaches slicing only through Fleet Manager's /api/slicer facade.
+      # fleet-orchestration/k8s/ingress.yaml carries the same path.
+      - name: Route /api/slicer to Fleet Manager
+        run: |
+          set -euo pipefail
+          PATHS="$(kubectl -n "$NAMESPACE" get ingress fleet-ingress -o jsonpath='{.spec.rules[0].http.paths[*].path}')"
+          if [[ " $PATHS " != *" /api/slicer "* ]]; then
+            kubectl -n "$NAMESPACE" patch ingress fleet-ingress --type json -p '[{"op":"add","path":"/spec/rules/0/http/paths/0","value":{"path":"/api/slicer","pathType":"Prefix","backend":{"service":{"name":"fleet-manager","port":{"number":8080}}}}}]'
+          fi
+      - name: Verify Fleet Manager reaches the worker
+        run: |
+          set -euo pipefail
+          kubectl -n "$NAMESPACE" exec deploy/fleet-manager -c fleet-manager -- python3 -c '
+          import json, os, urllib.request
+          request = urllib.request.Request("http://unlayered-slicer:8090/health", headers={"X-Service-Token": os.environ["SLICER_WORKER_TOKEN"]})
+          print(json.dumps(json.load(urllib.request.urlopen(request, timeout=10))))
+          '
