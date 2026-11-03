@@ -25,8 +25,14 @@ def settings(params, profile, project, accepted_features=()):
     unknown = set(params) - set(MAPPING) - ADVANCED - {"adhesion_type", "nozzle_temps"}
     if unknown:
         raise ValueError("Unsupported Unlayered settings: " + ", ".join(sorted(unknown)))
-    if profile.get("extruderCount", 1) != 1:
-        raise ValueError("The initial Unlayered adapter supports one extruder")
+    # 0.1.9 emits single-tool G-code. A multi-extruder printer is accepted only
+    # when the user chose which extruder prints; the others stay cold.
+    count = profile.get("extruderCount", 1)
+    tool = profile.get("printExtruder")
+    if tool is None and count != 1:
+        raise ValueError("The initial Unlayered adapter supports one extruder; choose which extruder prints")
+    if tool is not None and (isinstance(tool, bool) or not isinstance(tool, int) or not 1 <= tool <= count):
+        raise ValueError("Invalid print extruder")
     planes = any(o.get("cutPlanes") for o in project.get("objects", []))
     curved = params.get("nonplanar_layers") is True
     for feature, requested in (("curved_tops", curved), ("multiplanar", planes)):
@@ -50,7 +56,7 @@ def settings(params, profile, project, accepted_features=()):
         "filament_diameter": str(positive(profile.get("filamentDiameter", 1.75), "filament diameter", 3.5)),
         "gcode_flavor": {"marlin": "marlin2", "reprap": "reprapfirmware"}.get(profile.get("gcodeFlavor"), profile.get("gcodeFlavor", "klipper")),
         "use_relative_e_distances": "1", "layer_change_gcode": "G92 E0", "enable_arc_fitting": "0",
-        "machine_start_gcode": "G28\nM140 S[hot_plate_temp_initial_layer]\nM104 S[nozzle_temperature_initial_layer]\nM190 S[hot_plate_temp_initial_layer]\nM109 S[nozzle_temperature_initial_layer]", "machine_end_gcode": "M104 S0\nM140 S0",
+        "machine_start_gcode": "G28\n" + (f"T{tool - 1}\n" if count > 1 else "") + "M140 S[hot_plate_temp_initial_layer]\nM104 S[nozzle_temperature_initial_layer]\nM190 S[hot_plate_temp_initial_layer]\nM109 S[nozzle_temperature_initial_layer]", "machine_end_gcode": "M104 S0\nM140 S0",
         "curr_bed_type": "High Temp Plate", "gcode_comments": "1",
         "brim_type": "outer_only" if params.get("adhesion_type") == "brim" else "no_brim",
         "enable_nonplanar": "1" if planes else "0", "axis_selection": "virtual",

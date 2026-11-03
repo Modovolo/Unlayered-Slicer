@@ -37,3 +37,14 @@ def test_single_nozzle_temperature_is_applied_and_conflicts_are_rejected():
     for params in ({"nozzle_temps": [210, 240]}, {"nozzle_temps": [245], "nozzle_temp": 210}):
         with pytest.raises(ValueError, match="nozzle temperature"):
             settings(params, PROFILE, {})
+
+def test_multi_extruder_printers_need_a_chosen_extruder_which_the_gcode_selects():
+    dual = {**PROFILE, "extruderCount": 2}
+    with pytest.raises(ValueError, match="choose which extruder"):
+        settings({}, dual, {})
+    for tool in (0, 3, True, 1.0):
+        with pytest.raises(ValueError, match="Invalid print extruder"):
+            settings({}, {**dual, "printExtruder": tool}, {})
+    start = settings({}, {**dual, "printExtruder": 2}, {})["machine_start_gcode"].splitlines()
+    assert start[:2] == ["G28", "T1"]
+    assert "T0" not in settings({}, PROFILE, {})["machine_start_gcode"].split()
